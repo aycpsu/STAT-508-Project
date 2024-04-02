@@ -1,2 +1,4 @@
 ### This will be the code file used to run our analyses.
 ### Copy and paste the code into an R file to run.
+
+data <- read.csv("https://raw.githubusercontent.com/aycpsu/STAT-508-Project/main/banana_quality.csv?token=GHSAT0AAAAAACQOCKICB6BU2QDMD556IV2YZQMCN6A")
