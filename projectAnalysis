@@ -1,4 +1,0 @@
-### This will be the code file used to run our analyses.
-### To start, copy any code into an R file. When you are done working, paste your code from the R file to here or upload your Rmd.
-
-data <- read.csv("https://raw.githubusercontent.com/aycpsu/STAT-508-Project/main/banana_quality.csv?token=GHSAT0AAAAAACQOCKICB6BU2QDMD556IV2YZQMCN6A")
