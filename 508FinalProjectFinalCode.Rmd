@@ -1,0 +1,432 @@
+---
+title: "STAT 508 Final Project Model Validation"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r data and libraries}
+library(tidyverse)
+library(factoextra)
+library(klaR)
+library(MASS)
+library(tree)
+library(class)
+library(caret)
+
+
+banana_quality <- read.csv("https://raw.githubusercontent.com/aycpsu/STAT-508-Project/main/banana_quality.csv?token=GHSAT0AAAAAACQOCKICB6BU2QDMD556IV2YZQMCN6A")
+```
+
+
+```{r PCA}
+# Separate the features (X) and the target variable (y)
+X <- banana_quality[, -ncol(banana_quality)]
+y <- banana_quality[, ncol(banana_quality)]
+
+# Standardize the features
+X_scaled <- scale(X)
+
+# Perform PCA
+pca_result <- prcomp(X_scaled)
+
+# Merge the PCA results with the categorical variable "quality"
+fullPCAdata <- data.frame(pca_result$x, Quality = y)
+
+# Print the merged data
+head(fullPCAdata)
+
+# Print the summary of the PCA result
+summary(pca_result)
+
+# Print the loadings of PC1 and PC2
+cat("\nPC1 Loadings:\n")
+print(pca_result$rotation[, 1])
+cat("\nPC2 Loadings:\n")
+print(pca_result$rotation[, 2])
+
+# Plot the scree plot
+fviz_eig(pca_result, addlabels = TRUE, ylim = c(0, 100))
+
+# Plot the variables factor map
+fviz_pca_var(pca_result, col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE)
+```
+
+```{r model building}
+#### Classification models with all predictors
+# Create variable 0,1
+banana_quality$quality_bin <- ifelse(banana_quality$Quality == "Good", 1, 0)
+fullPCAdata$quality_bin <- ifelse(fullPCAdata$Quality == "Good", 1, 0)
+
+# Split data set into training and test set
+set.seed(123)
+trainsplit <- sample(nrow(banana_quality), size=5000)
+banana_train <- banana_quality[trainsplit,]
+banana_test <- banana_quality[-trainsplit,]
+
+# Split data set into training and test set
+set.seed(123)
+trainPCAsplit <- sample(nrow(fullPCAdata), size=5000)
+banana_trainPCA <- fullPCAdata[trainPCAsplit,]
+banana_testPCA <- fullPCAdata[-trainPCAsplit,]
+
+
+# Stepwise logistic regression 
+logit_firstorder <- glm(quality_bin ~ 
+                          Size + 
+                          Weight +
+                          Sweetness +
+                          Softness + 
+                          HarvestTime +
+                          Ripeness +
+                          Acidity
+                               , data= banana_train, family = "binomial")
+
+logit_null <- glm(quality_bin ~ 
+                    1, data= banana_train, family = "binomial")
+
+logit_stepwise <- stepAIC(logit_null, 
+                           scope = list(lower = logit_null, 
+                                        upper = logit_firstorder),trace=FALSE)
+summary(logit_stepwise)
+
+# Predict test set 
+pred_logit <- predict(logit_stepwise, banana_test)
+predtest <- ifelse(pred_logit > 0.5, "Good", "Bad")
+table(predtest, banana_test$Quality)
+mean(predtest == banana_test$Quality)
+
+
+# Classification tree
+set.seed(123)
+class_tree <- tree(factor(Quality) ~ 
+                     Size + 
+                     Weight +
+                     Sweetness +
+                     Softness + 
+                     HarvestTime +
+                     Ripeness +
+                     Acidity, banana_train)
+summary(class_tree)
+
+plot(class_tree)
+text(class_tree, pretty = 0)
+
+# Prune tree
+cv_tree <- cv.tree((class_tree))
+plot(cv_tree$size, cv_tree$dev, type = "b", xlab = "Tree size", ylab = "Deviance")
+
+# Predict test set
+pred_tree <- predict(class_tree, banana_test, type = "class")
+table(pred_tree, factor(banana_test$Quality))
+mean(pred_tree == factor(banana_test$Quality))
+
+
+# LDA
+lda_banana <- lda(factor(Quality) ~ 
+                    Size + 
+                    Weight +
+                    Sweetness +
+                    Softness + 
+                    HarvestTime +
+                    Ripeness +
+                    Acidity, banana_train)
+lda_banana
+plot(lda_banana)
+
+# Predict test set
+pred_LDA <- predict(lda_banana, banana_test, type = "class")
+table(pred_LDA$class, factor(banana_test$Quality))
+mean(pred_LDA$class == factor(banana_test$Quality))
+
+# QDA  
+qda_banana <- qda(factor(Quality) ~ #changed from lda function
+                    Size + 
+                    Weight +
+                    Sweetness +
+                    Softness + 
+                    HarvestTime +
+                    Ripeness +
+                    Acidity, banana_train)
+qda_banana
+
+# Predict test set
+pred_QDA <- predict(qda_banana, banana_test, type = "class")
+table(pred_QDA$class, factor(banana_test$Quality))
+mean(pred_QDA$class == factor(banana_test$Quality))
+
+# KNN
+trControl <- trainControl(method  = "cv",
+                          number  = 100)
+set.seed(123)
+kcross <- train(factor(Quality) ~ 
+                  Size + 
+                  Weight +
+                  Sweetness +
+                  Softness + 
+                  HarvestTime +
+                  Ripeness +
+                  Acidity,
+                method     = "knn",
+                tuneGrid   = expand.grid(k = 1:10),
+                trControl  = trControl,
+                metric     = "Accuracy",
+                data       = banana_train)
+kcross
+
+set.seed(123)
+knnpred <- knn(banana_train[,-c(8,9)], banana_test[,-c(8,9)], factor(banana_train$Quality), k=7)
+table(knnpred, factor(banana_test$Quality))
+mean(knnpred== factor(banana_test$Quality))
+
+```
+
+```{r}
+#### Classification models with PCA components
+# Stepwise logistic regression 
+logit_PCA <- glm(quality_bin ~ 
+                          PC1 +
+                          PC2  
+                        , data= banana_trainPCA, family = "binomial")
+summary(logit_PCA)
+
+# Predict test set 
+pred_logitPCA <- predict(logit_PCA, banana_testPCA)
+predtestPCA <- ifelse(pred_logitPCA > 0.5, "Good", "Bad")
+table(predtestPCA, banana_testPCA$Quality)
+mean(predtestPCA == banana_testPCA$Quality)
+
+
+# Classification tree
+set.seed(123)
+class_treePCA <- tree(factor(Quality) ~ 
+                     PC1 +
+                     PC2, banana_trainPCA)
+summary(class_treePCA)
+
+plot(class_treePCA)
+text(class_treePCA, pretty = 0)
+
+# Prune tree
+cv_treePCA <- cv.tree((class_treePCA))
+plot(cv_treePCA$size, cv_treePCA$dev, type = "b", xlab = "Tree size", ylab = "Deviance")
+
+# Predict test set
+pred_treePCA <- predict(class_treePCA, banana_testPCA, type = "class")
+table(pred_treePCA, factor(banana_testPCA$Quality))
+mean(pred_treePCA == factor(banana_testPCA$Quality))
+
+
+# LDA
+lda_bananaPCA <- lda(factor(Quality) ~ 
+                    PC1 +
+                    PC2, banana_trainPCA)
+lda_bananaPCA
+plot(lda_bananaPCA)
+
+# Predict test set
+pred_LDAPCA <- predict(lda_bananaPCA, banana_testPCA, type = "class")
+table(pred_LDAPCA$class, factor(banana_testPCA$Quality))
+mean(pred_LDAPCA$class == factor(banana_testPCA$Quality))
+
+# QDA  
+qda_bananaPCA <- qda(factor(Quality) ~ #changed from lda function
+                    PC1 +
+                    PC2, banana_trainPCA)
+qda_bananaPCA
+
+# Predict test set
+pred_QDAPCA <- predict(qda_bananaPCA, banana_testPCA, type = "class")
+table(pred_QDAPCA$class, factor(banana_testPCA$Quality))
+mean(pred_QDAPCA$class == factor(banana_testPCA$Quality))
+
+# KNN
+set.seed(123)
+kcrossPCA <- train(factor(Quality) ~ 
+                  PC1 +
+                  PC2,
+                method     = "knn",
+                tuneGrid   = expand.grid(k = 1:10),
+                trControl  = trControl,
+                metric     = "Accuracy",
+                data       = banana_trainPCA)
+kcrossPCA
+
+set.seed(123)
+knnpredPCA <- knn(banana_trainPCA[,-c(8,9)], banana_testPCA[,-c(8,9)], factor(banana_trainPCA$Quality), k=9)
+table(knnpredPCA, factor(banana_testPCA$Quality))
+mean(knnpredPCA== factor(banana_testPCA$Quality))
+```
+
+```{r model validation}
+set.seed(508)
+indeces <- matrix(sample(nrow(banana_quality), nrow(banana_quality), replace = FALSE), ncol = 10)
+
+stepLogOrError <- rep(NA, 10)
+treeOrError <- rep(NA, 10)
+ldaOrError <- rep(NA, 10)
+qdaOrError <- rep(NA, 10)
+knnOrError <- rep(NA, 10)
+
+
+for(i in 1:10){
+  # original data set
+  trainDataOr <- banana_quality[-indeces[,i],]
+  testDataOr <- banana_quality[indeces[,i],]
+  
+  # stepwise logistic
+  logit_firstorder <- glm(quality_bin ~ 
+                          Size + 
+                          Weight +
+                          Sweetness +
+                          Softness + 
+                          HarvestTime +
+                          Ripeness +
+                          Acidity
+                               , data= trainDataOr, family = "binomial")
+
+  logit_null <- glm(quality_bin ~ 
+                    1, data= trainDataOr, family = "binomial")
+
+  logit_stepwise <- stepAIC(logit_null, 
+                           scope = list(lower = logit_null, 
+                                        upper = logit_firstorder),trace=FALSE)
+  
+  stepPreds <- ifelse(predict(logit_stepwise, testDataOr) > 0.5, "Good", "Bad")
+  stepLogOrError[i] <- 1 - mean(stepPreds == testDataOr$Quality)
+  
+  
+  # classification tree
+  class_tree <- tree(as.factor(Quality) ~ 
+                     Size + 
+                     Weight +
+                     Sweetness +
+                     Softness + 
+                     HarvestTime +
+                     Ripeness +
+                     Acidity, trainDataOr)
+  
+  treePreds <- predict(class_tree, testDataOr, type = "class")
+  treeOrError[i] <- 1 - mean(treePreds == testDataOr$Quality)
+  
+  
+  # LDA
+  lda_banana <- lda(factor(Quality) ~ 
+                    Size + 
+                    Weight +
+                    Sweetness +
+                    Softness + 
+                    HarvestTime +
+                    Ripeness +
+                    Acidity, data = trainDataOr)
+
+  ldaPreds <- predict(lda_banana, testDataOr, type = "class")
+  ldaOrError[i] <- 1 - mean(ldaPreds$class == testDataOr$Quality)
+
+  # QDA  
+  qda_banana <- qda(factor(Quality) ~ 
+                    Size + 
+                    Weight +
+                    Sweetness +
+                    Softness + 
+                    HarvestTime +
+                    Ripeness +
+                    Acidity, data = trainDataOr)
+
+  qdaPreds <- predict(qda_banana, testDataOr, type = "class")
+  qdaOrError[i] <- 1 - mean(qdaPreds$class == testDataOr$Quality)
+
+
+  # KNN
+  set.seed(123)
+  knnPreds <- knn(trainDataOr[,-c(8,9)], testDataOr[,-c(8,9)], trainDataOr$Quality, k=7)
+  knnOrError[i] <- 1 - mean(knnPreds == factor(testDataOr$Quality))
+}
+
+stepLogPcaError <- rep(NA, 10)
+treePcaError <- rep(NA, 10)
+ldaPcaError <- rep(NA, 10)
+qdaPcaError <- rep(NA, 10)
+knnPcaError <- rep(NA, 10)
+
+for(i in 1:10){
+  # PCA data set
+  # 4 principal components used to account for at least 80% of the variance in the data
+  trainDataPca <- fullPCAdata[-indeces[,i],]
+  testDataPca <- fullPCAdata[indeces[,i],]
+  
+  # Stepwise logistic regression 
+  logit_PCA <- glm(quality_bin ~ 
+                          PC1 +
+                          PC2 +
+                          PC3 +
+                          PC4
+                          , data= trainDataPca, family = "binomial")
+
+  logPredsPca <- ifelse(predict(logit_PCA, testDataPca) > 0.5, "Good", "Bad")
+  stepLogPcaError[i] <- 1 - mean(logPredsPca == testDataPca$Quality)
+
+
+  # Classification tree
+  set.seed(123)
+  class_treePCA <- tree(factor(Quality) ~ 
+                    PC1 +
+                    PC2 +
+                    PC3 +
+                    PC4
+                    , trainDataPca)
+
+  treePredsPca <- predict(class_treePCA, testDataPca, type = "class")
+  treePcaError[i] <- 1 - mean(treePredsPca == testDataPca$Quality)
+
+
+  # LDA
+  lda_bananaPCA <- lda(factor(Quality) ~ 
+                    PC1 +
+                    PC2 +
+                    PC3 +
+                    PC4
+                    , trainDataPca)
+
+  ldaPredsPca <- predict(lda_bananaPCA, testDataPca, type = "class")
+  ldaPcaError[i] <- 1 - mean(ldaPredsPca$class == testDataPca$Quality)
+
+  # QDA  
+  qda_bananaPCA <- qda(factor(Quality) ~ #changed from lda function
+                    PC1 +
+                    PC2 +
+                    PC3 +
+                    PC4
+                    , trainDataPca)
+
+  qdaPredsPca <- predict(qda_bananaPCA, testDataPca, type = "class")
+  qdaPcaError[i] <- 1 - mean(qdaPredsPca$class == testDataPca$Quality)
+
+  
+  # KNN
+  knnTrainData <- trainDataPca %>%
+    dplyr::select(PC1, PC2, PC3, PC4, Quality)
+  knnTestData <- testDataPca %>%
+    dplyr::select(PC1, PC2, PC3, PC4, Quality)
+  
+  set.seed(123)
+  knnpredPCA <- knn(knnTrainData[,-5], knnTestData[,-5], knnTrainData$Quality, k=9)
+  knnPcaError[i] <- 1 - mean(knnpredPCA == knnTestData$Quality)
+}
+
+
+
+data.frame(
+  label = c("Original Data", "PCA Data"),
+  logisticReg = c(mean(stepLogOrError), mean(stepLogPcaError)),
+  classTree = c(mean(treeOrError), mean(treePcaError)),
+  lda = c(mean(ldaOrError), mean(ldaPcaError)),
+  qda = c(mean(qdaOrError), mean(qdaPcaError)),
+  knn = c(mean(knnOrError), mean(knnPcaError))
+)
+
+```
+
+
